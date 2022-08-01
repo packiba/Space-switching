@@ -37,53 +37,61 @@ zbd_chars = [
 def upper_case_name(name):
     return '_'.join(name.upper().split())
 
+# Функция для поиска во "вью-лейере" нужной коллекции по названию
+# 1 переменная - слот для переменной во "вью-лейере", 2 переменная - название коллекции
+def get_recur_layer_coll(layercoll, collname):
+    found = None
+    if (layercoll.name == collname):
+        if layercoll.collection.library is None:
+            return layercoll
+    for layer in layercoll.children:
+        found = get_recur_layer_coll(layer, collname)
+        if found:
+            return found
 
-class SpaceSwitchProps(PropertyGroup):
+# Функция для назначения коллекции активной во "вью-лейере" по названию.
+def set_active_layer_coll(coll_name):
+    layer_coll = bpy.context.view_layer.layer_collection
+    coll_layer = get_recur_layer_coll(layer_coll,
+                                      coll_name)
+    bpy.context.view_layer.active_layer_collection = coll_layer
+
+
+class SpaceSwitchingProps(PropertyGroup):
     axis: EnumProperty(
         name="Bone Axis",
         items=axes,
         description="Select axis to space switch",
         default="Y",
     )
+    
+    is_zbd: BoolProperty(
+        name="ZBD character",
+        description="This rig is ZBD character",
+        default=False,
+    )
 
     some_bone: BoolProperty(
         name="Enable for selected bone",
-        description="Enable space switch for selected bone",
+        description="Enable space switching for selected bone",
         default=False,
     )
 
     hands_on: BoolProperty(
         name="Enable for hands",
-        description="Enable space switch for hands",
+        description="Enable space switching for hands",
         default=False,
     )
 
     hand_L_on: BoolProperty(
         name="Enable for left hand",
-        description="Enable space switch for left hand",
+        description="Enable space switching for left hand",
         default=False,
     )
 
     hand_R_on: BoolProperty(
         name="Enable for right hand",
-        description="Enable space switch for right hand",
-        default=False,
-    )
-    feet_on: BoolProperty(
-        name="Enable for feet",
-        description="Enable space switch for feet",
-        default=False,
-    )
-
-    foot_L_on: BoolProperty(
-        name="Enable for left foot",
-        description="Enable space switch for left foot",
-        default=False,
-    )
-
-    foot_R_on: BoolProperty(
-        name="Enable for right foot",
-        description="Enable space switch for right foot",
+        description="Enable space switching for right hand",
         default=False,
     )
 
@@ -122,16 +130,16 @@ class SpaceSwitch(Operator):
         bpy.context.active_object.constraints[constraint].target = bpy.data.objects[armature]
         bpy.context.object.constraints[constraint].subtarget = bone.name
 
-    @classmethod
-    def translate_target(cls, props, bone):
-        if props.hands_on:
+    
+    def translate_target(self, props, bone):
+        if props.hands_on and not props.some_bone and props.is_zbd:
             if bone.name.split('.')[-1] == 'L':
                 bpy.ops.transform.translate(value=(props.rot_distance, 0, 0), orient_type='LOCAL')
             else:
                 bpy.ops.transform.translate(value=(-props.rot_distance, 0, 0), orient_type='LOCAL')
-        elif props.feet_on:
-            bpy.ops.transform.translate(value=(0, 0, -props.rot_distance), orient_type='LOCAL')
         else:
+            print('axis', props.axis)
+            print('rot_distance', props.rot_distance)
             if props.axis == 'X':
                 bpy.ops.transform.translate(value=(props.rot_distance, 0, 0), orient_type='LOCAL')
             elif props.axis == '-X':
@@ -146,7 +154,7 @@ class SpaceSwitch(Operator):
                 bpy.ops.transform.translate(value=(0, 0, -props.rot_distance), orient_type='LOCAL')
 
     def create_target(self, scene, props, armature, bone, type):
-        character = armature.split('_')[0]
+        character = armature.split('_armature')[0]
         st_frame = scene.frame_start
         end_frame = scene.frame_end
         if type == LOC:
@@ -155,6 +163,7 @@ class SpaceSwitch(Operator):
             constraint_type = 'Copy Transforms'
 
         name = f'{character}_{bone.name}_{type}_target'
+        set_active_layer_coll(f'{character}_space_switching')
         bpy.ops.object.empty_add(type='PLAIN_AXES', align='WORLD')
         target = bpy.context.selected_objects[0]
         target.empty_display_size = 0.1
@@ -176,29 +185,42 @@ class SpaceSwitch(Operator):
 
     def execute(self, context):
         scene = context.scene
-        props = scene.space_switch
+        props = scene.space_switching
         armature = bpy.context.active_object.name
-        character = armature.split('_')[0]
-        bones = []
-        if props.hand_L_on:
-            bones.append(bpy.data.objects[armature].pose.bones['hand.L'])
-        if props.hand_R_on:
-            bones.append(bpy.data.objects[armature].pose.bones['hand.R'])
-        if props.foot_L_on:
-            bones.append(bpy.data.objects[armature].pose.bones['IK.foot.L'])
-        if props.foot_R_on:
-            bones.append(bpy.data.objects[armature].pose.bones['IK.foot.R'])
+        character = armature.split('_armature')[0]
+        print(character)
+        bones = []        
+        for char in zbd_chars:
+            if char in armature:
+                props.is_zbd = True
 
-        if props.some_bone:
+        if props.is_zbd:
+            if props.hand_L_on:
+                bones.append(bpy.data.objects[armature].pose.bones['hand.L'])
+            if props.hand_R_on:
+                bones.append(bpy.data.objects[armature].pose.bones['hand.R'])
+            if props.some_bone:
+                bones = bpy.context.selected_pose_bones
+        else:
             bones = bpy.context.selected_pose_bones
 
         bpy.ops.object.posemode_toggle()
+
+
+        if props.is_zbd:
+            set_active_layer_coll(character)
+            
+        if not get_recur_layer_coll(bpy.context.view_layer.layer_collection, f'{character}_space_switching'):
+            collection = bpy.context.blend_data.collections.new(name=f'{character}_space_switching')
+            bpy.context.collection.children.link(collection)
 
         for bone in bones:
             self.create_target(scene, props, armature, bone, LOC)
             self.create_target(scene, props, armature, bone, ROT)
 
         obj = bpy.data.objects[armature]
+
+
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
 
@@ -208,14 +230,14 @@ class SpaceSwitch(Operator):
             name1 = f'{character}_{bone.name}_{ROT}_target'
             name2 = f'{character}_{bone.name}_{LOC}_target'
             bone.constraints.new(type='DAMPED_TRACK')
+            print(name1)
+            print(name2)
             bone.constraints["Damped Track"].target = bpy.data.objects[name1]
-            if props.hands_on:
+            if props.hands_on and not props.some_bone and props.is_zbd:
                 if bone.name.split('.')[-1] == 'L':
                     bone.constraints["Damped Track"].track_axis = 'TRACK_X'
                 else:
                     bone.constraints["Damped Track"].track_axis = 'TRACK_NEGATIVE_X'
-            elif props.feet_on:
-                bone.constraints["Damped Track"].track_axis = 'TRACK_NEGATIVE_Z'
             else:
                 if props.axis == 'X':
                     bone.constraints["Damped Track"].track_axis = 'TRACK_X'
@@ -237,8 +259,8 @@ class SpaceSwitch(Operator):
         return {'FINISHED'}
 
 
-class OBJECT_PT_SpaceSwitch(Panel):
-    bl_label = 'Space switch'
+class OBJECT_PT_SpaceSwitching(Panel):
+    bl_label = 'Space switching'
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Animation'
@@ -250,7 +272,7 @@ class OBJECT_PT_SpaceSwitch(Panel):
             if char in armature:
                 is_ZBD_char = True
         bones = context.selected_pose_bones
-        props = context.scene.space_switch
+        props = context.scene.space_switching
 
         layout = self.layout
         if is_ZBD_char:
@@ -258,29 +280,21 @@ class OBJECT_PT_SpaceSwitch(Panel):
                 row = layout.row(align=True)
                 col = row.column()
                 col.prop(props, "hands_on", text='hands', toggle=True)
-                row.separator()
                 if props.hands_on:
+                    row.separator()
                     row = row.row(align=True)
                     row.prop(props, "hand_L_on", text='L', toggle=True)
                     row.prop(props, "hand_R_on", text='R', toggle=True)
 
-                row = layout.row(align=True)
-                col = row.column()
-                col.prop(props, "feet_on", text='feet', toggle=True)
-                row.separator()
-                if props.feet_on:
-                    row = row.row(align=True)
-                    row.prop(props, "foot_L_on", text='L', toggle=True)
-                    row.prop(props, "foot_R_on", text='R', toggle=True)
         row = layout.row(align=True)
         col = row.column()
 
         if is_ZBD_char:
             if props.some_bone:
                 if len(bones) == 0:
-                    col.label(text=' select bone')
+                    col.prop(props, "some_bone", text=' select bone', toggle=True)
                 elif len(bones) > 1:
-                    col.label(text=' select only one bone')
+                    col.prop(props, "some_bone", text=' select only one bone', toggle=True)
                 else:
                     sel_bone_name = bones[0].name
                     col.prop(props, "some_bone", text=sel_bone_name, toggle=True)
@@ -291,13 +305,14 @@ class OBJECT_PT_SpaceSwitch(Panel):
             else:
                 col.prop(props, "some_bone", text='selected bone', toggle=True)
         else:
-            if len(bones) == 0:
-                col.label(text=' select bone')
-            elif len(bones) > 1:
-                col.label(text=' select only one bone')
+            if bones and len(bones) == 0:
+                col.prop(props, "some_bone", text=' select bone', toggle=True)
+            elif bones and len(bones) > 1:
+                col.prop(props, "some_bone", text=' select only one bone', toggle=True)
             else:
-                sel_bone_name = bones[0].name
-                col.label(text=sel_bone_name)
+                if bones:
+                    sel_bone_name = bones[0].name
+                    col.label(text=sel_bone_name)
                 col = row.column()
                 col.prop(props, "axis", text='', icon='EMPTY_ARROWS')
 
@@ -307,17 +322,19 @@ class OBJECT_PT_SpaceSwitch(Panel):
         col.separator()
 
         col = layout.column()
-        if props.hands_on or props.feet_on or (props.some_bone and len(bones) == 1):
+        if props.some_bone and len(bones) == 1:
             col.operator(SpaceSwitch.bl_idname, text="Start space switch")
-        else:
+        elif props.hands_on and not props.some_bone and (props.hand_L_on or props.hand_R_on):
+            col.operator(SpaceSwitch.bl_idname, text="Start space switch")
+        else:            
             col.label(text='Nothing to space switch')
             col.alignment = 'CENTER'
 
 
 classes = [
-    SpaceSwitchProps,
+    SpaceSwitchingProps,
     SpaceSwitch,
-    OBJECT_PT_SpaceSwitch,
+    OBJECT_PT_SpaceSwitching,
 ]
 
 
@@ -325,7 +342,7 @@ def register():
     for cl in classes:
         register_class(cl)
 
-    bpy.types.Scene.space_switch = PointerProperty(type=SpaceSwitchProps)
+    bpy.types.Scene.space_switching = PointerProperty(type=SpaceSwitchingProps)
 
 
 def unregister():
